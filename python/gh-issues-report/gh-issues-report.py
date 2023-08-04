@@ -6,7 +6,8 @@ import json
 import logging
 import signal
 import sys
-from github import Github, GithubException
+import time
+from github import Github, GithubException, RateLimitExceededException
 import pandas as pd
 
 parser = argparse.ArgumentParser()
@@ -40,72 +41,132 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 
-def create_html_report(json_data):
+def create_html_report(json_data, log):
     data_dict = json.loads(json_data)
 
+    log.debug("Creating issues and milestones dataframes...")
     issues_data = []
     for issue in data_dict['issues']:
-        issues_data.append({'title': issue['title'], 'description': issue['description'], 'comments': ''})
+        issues_data.append({
+            'title': f'<a href="{issue["url"]}">{issue["title"]}</a>',
+            'description': issue['description'],
+            'created_at': issue['created_at'],
+            'updated_at': issue['updated_at'],
+            'comments': ''
+        })
         for comment in issue['comments']:
-            issues_data.append({'title': issue['title'], 'description': '', 'comments': comment['body']})
+            issues_data.append({
+                'title': '',
+                'description': '',
+                'created_at': comment['created_at'],
+                'updated_at': '',
+                'comments': comment['body']
+            })
 
-    milestones_data = [milestone['title'] for milestone in data_dict['milestones']]
+    milestones_data = []
+    for milestone in data_dict['milestones']:
+        milestones_data.append({
+            'title': f'<a href="{milestone["url"]}">{milestone["title"]}</a>',
+            'created_at': milestone['created_at'],
+            'updated_at': milestone['updated_at']
+        })
 
-    # Create dataframe for issues and milestones
     issues_df = pd.DataFrame(issues_data)
-    milestones_df = pd.DataFrame(milestones_data, columns=['title'])
+    milestones_df = pd.DataFrame(milestones_data)
 
-    # Generate HTML tables from dataframes
-    issues_html = issues_df.to_html(index=False)
-    milestones_html = milestones_df.to_html(index=False)
+    log.debug("Adding Tailwind CSS classes to HTML tables...")
+    def add_table_classes(html_string):
+        html_string = html_string.replace("<table>", '<table class="table-auto w-full">')
+        html_string = html_string.replace("<th>", '<th class="px-4 py-2">')
+        html_string = html_string.replace("<td>", '<td class="border px-4 py-2">')
+        return html_string
 
-    # Combine issues and milestones tables into one HTML file
+    log.debug("Generate HTML tables from dataframes...")
+    issues_html = add_table_classes(issues_df.to_html(index=False, escape=False))
+    milestones_html = add_table_classes(milestones_df.to_html(index=False))
+
+    log.debug("Combining HTML tables into one HTML file...")
     html_report = f"""
-    <h1>GitHub Issues</h1>
-    {issues_html}
-    <h1>GitHub Milestones</h1>
-    {milestones_html}
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body>
+        <h1 class="text-3xl font-bold mb-4 mt-8 text-center">GitHub Milestones</h1>
+        {milestones_html}
+        <h1 class="text-3xl font-bold mb-4 text-center">GitHub Issues</h1>
+        {issues_html}
+    </body>
+    </html>
     """
 
-    # Write HTML report to a file
+    log.debug("Writing HTML report to file...")
     with open("github_report.html", "w") as f:
         f.write(html_report)
 
+
 class GithubWorker:
     def __init__(self, owner, repo, api_key, log):
+        self.log = log
         self.api = Github(api_key)
-        rate_limit = self.api.get_rate_limit().core.remaining
-        if rate_limit <= 0:
-            log.error("GitHub API rate limit has been reached. Exiting...")
-            sys.exit(1)
+        self.log.debug("Initialising GithubWorker...")
         try:
+            rate_limit = self.api.get_rate_limit().core.remaining
+            self.log.debug(f"Rate limit remaining: {rate_limit}")
+            if rate_limit <= 0:
+                self.log.error("GitHub API rate limit has been reached. Exiting...")
+                sys.exit(1)
+            self.log.debug("Fetching repo and issues data from Github...")
             self.repo = self.api.get_repo(f"{owner}/{repo}")
             self.issues = self.repo.get_issues(state="all")
             self.milestones = self.repo.get_milestones()
         except GithubException as e:
-            log.error(f"Error fetching data from Github: {str(e)}")
+            self.log.error(f"Error fetching data from Github: {str(e)}")
             sys.exit(1)
-        self.log = log
 
-    # TODO: Add dates to issues and milestones
     def get_issues(self):
+        self.log.debug("Creating issues and milestones JSON...")
         data = {}
         data['issues'] = []
         data['milestones'] = []
-        for issue in self.issues:
-            issue_data = {
-                'title': issue.title,
-                'description': issue.body,
-                'comments': [{'body': comment.body} for comment in issue.get_comments()]
-            }
-            data['issues'].append(issue_data)
+        try:
+            for milestone in self.milestones:
+                milestone_data = {
+                    'title': milestone.title,
+                    'url': milestone.html_url,
+                    'created_at': milestone.created_at.isoformat(),
+                    'updated_at': milestone.updated_at.isoformat()
+                }
+                data['milestones'].append(milestone_data)
+                self.log.debug(f"Milestone fetched: {milestone_data['title']}")
 
-        for milestone in self.milestones:
-            milestone_data = {
-                'title': milestone.title
-            }
-            data['milestones'].append(milestone_data)
+            for issue in self.issues:
+                issue_data = {
+                    'title': issue.title,
+                    'description': issue.body,
+                    'created_at': issue.created_at.isoformat(),
+                    'updated_at': issue.updated_at.isoformat(),
+                    'url': issue.html_url,
+                    'comments': [{'body': comment.body, 'created_at': comment.created_at.isoformat()} for comment in issue.get_comments()]
+                }
+                data['issues'].append(issue_data)
+                self.log.debug(f"Issue fetched: {issue_data['title']}")
+                rate_limit = self.api.get_rate_limit().core.remaining
+                self.log.debug(f"Rate limit remaining: {rate_limit}")
+        except RateLimitExceededException as e:
+            self.log.error(f"Rate limit exceeded error: {str(e)}")
+            time_to_reset = self.api.rate_limiting_resettime - int(time.time())
+            if time_to_reset > 0:
+                self.log.error(f"Waiting {time_to_reset} seconds before trying again...")
+                time.sleep(time_to_reset)
+        except GithubException as e:
+            self.log.error(f"Error fetching issues or milestones: {str(e)}")
+            sys.exit(1)
 
+        self.log.debug("JSON completed.")
         return json.dumps(data)
 
 
@@ -144,6 +205,6 @@ if __name__ == "__main__":
 
     gh = GithubWorker(owner, repo, token, log)
     report_data = gh.get_issues()
-    create_html_report(report_data)
+    create_html_report(report_data, log)
 
 
