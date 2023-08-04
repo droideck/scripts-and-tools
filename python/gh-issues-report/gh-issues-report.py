@@ -1,11 +1,13 @@
 # PYTHON_ARGCOMPLETE_OK
 
-import logging
 import argparse
 import argcomplete
-import sys
+import json
+import logging
 import signal
+import sys
 from github import Github, GithubException
+import pandas as pd
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -38,11 +40,41 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 
+def create_html_report(json_data):
+    data_dict = json.loads(json_data)
+
+    issues_data = []
+    for issue in data_dict['issues']:
+        issues_data.append({'title': issue['title'], 'description': issue['description'], 'comments': ''})
+        for comment in issue['comments']:
+            issues_data.append({'title': issue['title'], 'description': '', 'comments': comment['body']})
+
+    milestones_data = [milestone['title'] for milestone in data_dict['milestones']]
+
+    # Create dataframe for issues and milestones
+    issues_df = pd.DataFrame(issues_data)
+    milestones_df = pd.DataFrame(milestones_data, columns=['title'])
+
+    # Generate HTML tables from dataframes
+    issues_html = issues_df.to_html(index=False)
+    milestones_html = milestones_df.to_html(index=False)
+
+    # Combine issues and milestones tables into one HTML file
+    html_report = f"""
+    <h1>GitHub Issues</h1>
+    {issues_html}
+    <h1>GitHub Milestones</h1>
+    {milestones_html}
+    """
+
+    # Write HTML report to a file
+    with open("github_report.html", "w") as f:
+        f.write(html_report)
+
 class GithubWorker:
     def __init__(self, owner, repo, api_key, log):
         self.api = Github(api_key)
         rate_limit = self.api.get_rate_limit().core.remaining
-        # log.info(f"GitHub API rate limit: {rate_limit}")
         if rate_limit <= 0:
             log.error("GitHub API rate limit has been reached. Exiting...")
             sys.exit(1)
@@ -55,16 +87,26 @@ class GithubWorker:
             sys.exit(1)
         self.log = log
 
-    def print_issues(self):
+    # TODO: Add dates to issues and milestones
+    def get_issues(self):
+        data = {}
+        data['issues'] = []
+        data['milestones'] = []
         for issue in self.issues:
-            print(f"Issue ID: {issue.id}, Issue Title: {issue.title}")
-            comments = issue.get_comments()
-            for comment in comments:
-                print(f"Comment ID: {comment.id}, Comment Body: {comment.body}")
-            print("")
-        for milestone in self.milestones:
-            print(f"Milestone ID: {milestone.id}, Milestone Title: {milestone.title}")
+            issue_data = {
+                'title': issue.title,
+                'description': issue.body,
+                'comments': [{'body': comment.body} for comment in issue.get_comments()]
+            }
+            data['issues'].append(issue_data)
 
+        for milestone in self.milestones:
+            milestone_data = {
+                'title': milestone.title
+            }
+            data['milestones'].append(milestone_data)
+
+        return json.dumps(data)
 
 
 if __name__ == "__main__":
@@ -101,6 +143,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     gh = GithubWorker(owner, repo, token, log)
-    gh.print_issues()
+    report_data = gh.get_issues()
+    create_html_report(report_data)
 
 
