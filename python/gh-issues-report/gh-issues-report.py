@@ -4,6 +4,7 @@ import argparse
 import argcomplete
 import json
 import logging
+import re
 import signal
 import sys
 import time
@@ -34,45 +35,67 @@ parser.add_argument(
 
 argcomplete.autocomplete(parser)
 
+report_data = {}
+root = logging.getLogger()
+log = logging.getLogger("gh-issues-report")
+log_handler = logging.StreamHandler(sys.stdout)
 
 # Handle a control-c gracefully
 def signal_handler(signal, frame):
-    print("\n\nExiting...")
+    print("\nCTRL-C detected. Displaying the gathered report...\n")
+    create_html_report(report_data, log)
     sys.exit(0)
 
+def remove_meta_content(text):
+    # Pattern for the "Comment from..." text
+    comment_pattern = r'\*\*Comment from .+?\*\*\n\n'
+    text = re.sub(comment_pattern, '', text)
 
-def create_html_report(json_data, log):
-    data_dict = json.loads(json_data)
+    # Pattern for the "Cloned from Pagure issue..." text
+    cloned_pattern = r'Cloned from Pagure issue:.+?\n'
+    text = re.sub(cloned_pattern, '', text)
+
+    import pdb; pdb.set_trace()
+    text = text.strip().replace('\\n', '\n').replace('\\r', '\r')
+    return text
+
+
+def create_html_report(data_dict, log):
+    #json_data = json.dumps(report_data)
+    #data_dict = json.loads(json_data)
 
     log.debug("Creating issues and milestones dataframes...")
     issues_data = []
     for issue in data_dict['issues']:
+        description = remove_meta_content(issue['description'])
         issues_data.append({
-            'title': f'<a href="{issue["url"]}">{issue["title"]}</a>',
-            'description': issue['description'],
-            'created_at': issue['created_at'],
-            'updated_at': issue['updated_at'],
-            'comments': ''
+            'Title (URL)': f'<a href="{issue["url"]}">{issue["title"]}</a>',
+            'Description': description,
+            #'created_at': issue['created_at'],
+            #'updated_at': issue['updated_at'],
+            'Comments': description
         })
         for comment in issue['comments']:
+            if "**Metadata Update from" in comment['body']:
+                continue
             issues_data.append({
-                'title': '',
-                'description': '',
-                'created_at': comment['created_at'],
-                'updated_at': '',
-                'comments': comment['body']
+                'Title (URL)': '',
+                'Description': '',
+            #    'created_at': comment['created_at'],
+            #    'updated_at': '',
+                'Comments': remove_meta_content(comment['body'])
             })
 
-    milestones_data = []
-    for milestone in data_dict['milestones']:
-        milestones_data.append({
-            'title': f'<a href="{milestone["url"]}">{milestone["title"]}</a>',
-            'created_at': milestone['created_at'],
-            'updated_at': milestone['updated_at']
-        })
+    #milestones_data = []
+    #for milestone in data_dict['milestones']:
+    #    milestones_data.append({
+    #        'title': f'<a href="{milestone["url"]}">{milestone["title"]}</a>',
+    #    #    'created_at': milestone['created_at'],
+    #    #    'updated_at': milestone['updated_at']
+    #    })
 
     issues_df = pd.DataFrame(issues_data)
-    milestones_df = pd.DataFrame(milestones_data)
+    #milestones_df = pd.DataFrame(milestones_data)
 
     log.debug("Adding Tailwind CSS classes to HTML tables...")
     def add_table_classes(html_string):
@@ -83,7 +106,7 @@ def create_html_report(json_data, log):
 
     log.debug("Generate HTML tables from dataframes...")
     issues_html = add_table_classes(issues_df.to_html(index=False, escape=False))
-    milestones_html = add_table_classes(milestones_df.to_html(index=False))
+    #milestones_html = add_table_classes(milestones_df.to_html(index=False))
 
     log.debug("Combining HTML tables into one HTML file...")
     html_report = f"""
@@ -95,8 +118,6 @@ def create_html_report(json_data, log):
         <script src="https://cdn.tailwindcss.com"></script>
     </head>
     <body>
-        <h1 class="text-3xl font-bold mb-4 mt-8 text-center">GitHub Milestones</h1>
-        {milestones_html}
         <h1 class="text-3xl font-bold mb-4 text-center">GitHub Issues</h1>
         {issues_html}
     </body>
@@ -121,38 +142,37 @@ class GithubWorker:
                 sys.exit(1)
             self.log.debug("Fetching repo and issues data from Github...")
             self.repo = self.api.get_repo(f"{owner}/{repo}")
-            self.issues = self.repo.get_issues(state="all")
-            self.milestones = self.repo.get_milestones()
+            self.issues = self.repo.get_issues(state="open", sort="created", direction="asc")
+            #self.milestones = self.repo.get_milestones()
         except GithubException as e:
             self.log.error(f"Error fetching data from Github: {str(e)}")
             sys.exit(1)
 
     def get_issues(self):
         self.log.debug("Creating issues and milestones JSON...")
-        data = {}
-        data['issues'] = []
-        data['milestones'] = []
+        report_data['issues'] = []
+        #report_data['milestones'] = []
         try:
-            for milestone in self.milestones:
-                milestone_data = {
-                    'title': milestone.title,
-                    'url': milestone.html_url,
-                    'created_at': milestone.created_at.isoformat(),
-                    'updated_at': milestone.updated_at.isoformat()
-                }
-                data['milestones'].append(milestone_data)
-                self.log.debug(f"Milestone fetched: {milestone_data['title']}")
+            #for milestone in self.milestones:
+            #    milestone_data = {
+            #        'title': milestone.title,
+            #        'url': milestone.html_url,
+            #        'created_at': milestone.created_at.isoformat(),
+            #        'updated_at': milestone.updated_at.isoformat()
+            #    }
+            #    report_data['milestones'].append(milestone_data)
+            #    self.log.debug(f"Milestone fetched: {milestone_data['title']}")
 
             for issue in self.issues:
                 issue_data = {
                     'title': issue.title,
                     'description': issue.body,
-                    'created_at': issue.created_at.isoformat(),
-                    'updated_at': issue.updated_at.isoformat(),
+            #        'created_at': issue.created_at.isoformat(),
+            #        'updated_at': issue.updated_at.isoformat(),
                     'url': issue.html_url,
                     'comments': [{'body': comment.body, 'created_at': comment.created_at.isoformat()} for comment in issue.get_comments()]
                 }
-                data['issues'].append(issue_data)
+                report_data['issues'].append(issue_data)
                 self.log.debug(f"Issue fetched: {issue_data['title']}")
                 rate_limit = self.api.get_rate_limit().core.remaining
                 self.log.debug(f"Rate limit remaining: {rate_limit}")
@@ -167,14 +187,9 @@ class GithubWorker:
             sys.exit(1)
 
         self.log.debug("JSON completed.")
-        return json.dumps(data)
 
 
 if __name__ == "__main__":
-    root = logging.getLogger()
-    log = logging.getLogger("gh-issues-report")
-    log_handler = logging.StreamHandler(sys.stdout)
-
     args = parser.parse_args()
     if args.verbose:
         log.setLevel(logging.DEBUG)
@@ -204,7 +219,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     gh = GithubWorker(owner, repo, token, log)
-    report_data = gh.get_issues()
+    gh.get_issues()
     create_html_report(report_data, log)
 
 
