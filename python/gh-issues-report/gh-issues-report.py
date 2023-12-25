@@ -49,13 +49,16 @@ def signal_handler(signal, frame):
 def remove_meta_content(text):
     # Pattern for the "Comment from..." text
     comment_pattern = r'\*\*Comment from .+?\*\*\n\n'
-    text = re.sub(comment_pattern, '', text)
+    text = re.sub(comment_pattern, '', text, flags=re.DOTALL)
 
     # Pattern for the "Cloned from Pagure issue..." text
     cloned_pattern = r'Cloned from Pagure issue:.+?\n'
-    text = re.sub(cloned_pattern, '', text)
+    text = re.sub(cloned_pattern, '', text, flags=re.DOTALL)
 
-    import pdb; pdb.set_trace()
+    # Pattern for the "Created at..." text
+    cloned_pattern = r'- Created at .+?---\n\n'
+    text = re.sub(cloned_pattern, '', text, flags=re.DOTALL)
+
     text = text.strip().replace('\\n', '\n').replace('\\r', '\r')
     return text
 
@@ -70,10 +73,10 @@ def create_html_report(data_dict, log):
         description = remove_meta_content(issue['description'])
         issues_data.append({
             'Title (URL)': f'<a href="{issue["url"]}">{issue["title"]}</a>',
-            'Description': description,
+            'Description': remove_meta_content(description),
             #'created_at': issue['created_at'],
             #'updated_at': issue['updated_at'],
-            'Comments': description
+            'Comments': remove_meta_content(description),
         })
         for comment in issue['comments']:
             if "**Metadata Update from" in comment['body']:
