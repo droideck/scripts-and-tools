@@ -1,0 +1,14 @@
+kanka:
+  endpoint: "campaigns_url"
+  token: "token_value"
+
+locations:
+- url: "https://pillarsofeternity.fandom.com/wiki/Dyrford_Village"
+  characters:
+  - url: "https://pillarsofeternity.fandom.com/wiki/Grieving_Mother"
+  children:
+  - url: "https://pillarsofeternity.fandom.com/wiki/Dracogen_Inn"
+    characters:
+    - url: "https://pillarsofeternity.fandom.com/wiki/Dengler"
+    - url: "https://pillarsofeternity.fandom.com/wiki/Eorn"
+    children: []
