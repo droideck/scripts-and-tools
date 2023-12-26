@@ -12,6 +12,20 @@ translate_client = translate.Client()
 with open("config.yaml", 'r') as stream:
     config = yaml.safe_load(stream)
 
+# Load translations
+character_translations = {}
+location_translations = {}
+
+with open("characters.txt", 'r') as file:
+    for line in file:
+        english, translated = line.strip().split(' - ')
+        character_translations[english] = translated
+
+with open("maps.txt", 'r') as file:
+    for line in file:
+        english, translated = line.strip().split(' - ')
+        location_translations[english] = translated
+
 KANKA_ENDPOINT = config['kanka']['endpoint']
 KANKA_TOKEN = config['kanka']['token']
 TARGET_LANGUAGE = 'ru'
@@ -145,7 +159,6 @@ def create_kanka_character(name, description, location_id):
         'Authorization': f'Bearer {KANKA_TOKEN}',
         'Content-Type': 'application/json'
     }
-    import pdb; pdb.set_trace()
     data = {
         "name": name,
         "entry": translated_description,
@@ -160,6 +173,8 @@ def process_character(character_url, location_id):
     Process each character: fetch data, create entity in Kanka.
     """
     character_name = extract_name_from_url(character_url)
+    if character_name in character_translations:
+        character_name = character_translations[character_name]
     character_description, _, _ = fetch_and_parse_wiki(character_url, ["Background", "Description"])  # Assuming these sections are relevant
 
     character_response = create_kanka_character(character_name, character_description, location_id)
@@ -173,6 +188,8 @@ def process_character(character_url, location_id):
 # Modify process_location to handle characters
 def process_location(location, parent_id=None):
     location_name = extract_name_from_url(location['url'])
+    if location_name in location_translations:
+        location_name = location_translations[location_name]
     location_description, image_url, location_type = fetch_and_parse_wiki(location['url'], ["Background", "Description"])
     poi_description = fetch_and_parse_wiki(location['url'], ["Points_of_interest", "Characters", "Companion_reactions", "History", "Districts"])[0]
 
