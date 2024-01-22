@@ -16,12 +16,12 @@ with open("config.yaml", 'r') as stream:
 character_translations = {}
 location_translations = {}
 
-with open("characters.txt", 'r') as file:
+with open("characters.txt", 'r', encoding='utf-8') as file:
     for line in file:
         english, translated = line.strip().split(' - ')
         character_translations[english] = translated
 
-with open("maps.txt", 'r') as file:
+with open("maps.txt", 'r', encoding='utf-8') as file:
     for line in file:
         english, translated = line.strip().split(' - ')
         location_translations[english] = translated
@@ -29,6 +29,25 @@ with open("maps.txt", 'r') as file:
 KANKA_ENDPOINT = config['kanka']['endpoint']
 KANKA_TOKEN = config['kanka']['token']
 TARGET_LANGUAGE = 'ru'
+
+# Rate limiting variables
+request_counter = 0
+last_request_time = time.time()
+
+def check_rate_limit():
+    global request_counter, last_request_time
+    current_time = time.time()
+    if current_time - last_request_time >= 60:
+        request_counter = 0
+        last_request_time = current_time
+    request_counter += 1
+    if request_counter > 85:
+        sleep_time = 60 - (current_time - last_request_time)
+        print(f"Rate limit reached. Sleeping for {sleep_time} seconds.")
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+        request_counter = 0
+        last_request_time = time.time()
 
 def update_links(html_content, base_url="https://pillarsofeternity.fandom.com"):
     """
@@ -41,17 +60,13 @@ def update_links(html_content, base_url="https://pillarsofeternity.fandom.com"):
             a_tag['href'] = base_url + href  # Update with the base_url
     return str(soup)
 
-def translate_and_update_description(description, location_url=None):
+def translate_and_update_description(description):
     """
     Translate the description and update the links within it.
     """
     translated_description = translate_text(description)
     # Update links in the translated description
     translated_description = update_links(translated_description)
-
-    if location_url:
-        location_link = f'<a href="{location_url}">{location_url}</a>'
-        translated_description += f"\n{location_link}\n"
 
     return translated_description
 
@@ -109,8 +124,33 @@ def extract_name_from_url(url):
     name = url.split('/')[-1]  
     return unquote(name).replace('_', ' ')
 
+def post_to_kanka_entity(entity_id, fandom_url):
+    check_rate_limit()  # Checking the rate limit
+
+    # Prepare the post data
+    post_title = "Fandom Link"
+    post_entry = f"<a href='{fandom_url}'>{fandom_url}</a>"
+
+    # API endpoint and headers
+    post_endpoint = f"https://api.kanka.io/1.0/campaigns/227289/entities/{entity_id}/posts"
+    headers = {
+        'Authorization': f'Bearer {KANKA_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+
+    # Data for the POST request
+    data = {
+        "name": post_title,
+        "entity_id": entity_id,
+        "entry": post_entry
+    }
+
+    response = requests.post(post_endpoint, json=data, headers=headers)
+    return response.json()  # Return the response data
+
 # Function to post to a location in Kanka
 def post_to_kanka_location(location_id, poi_content):
+    check_rate_limit()
     translated_poi_content = translate_and_update_description(poi_content)
 
     post_endpoint = f"https://api.kanka.io/1.0/campaigns/227289/entities/{location_id}/posts"
@@ -127,7 +167,8 @@ def post_to_kanka_location(location_id, poi_content):
     return response
 
 def create_kanka_location(name, description, image_url=None, location_type=None, parent_id=None, location_url=None):
-    translated_description = translate_and_update_description(description, location_url)
+    check_rate_limit()
+    translated_description = translate_and_update_description(description)
 
     location_endpoint = f"{KANKA_ENDPOINT}/locations"
     headers = {
@@ -146,12 +187,17 @@ def create_kanka_location(name, description, image_url=None, location_type=None,
         data["type"] = location_type
 
     response = requests.post(location_endpoint, json=data, headers=headers)
-    return response.json()
+    response_data = response.json()  # Convert response to JSON format
+    if response_data.get('data') and response_data['data'].get('entity_id'):
+        location_entity_id = response_data['data']['entity_id']
+        post_to_kanka_entity(location_entity_id, location_url)
+    return response_data
 
-def create_kanka_character(name, description, location_id):
+def create_kanka_character(name, description, location_id, character_url=None):
     """
     Create a character in Kanka with the given information.
     """
+    check_rate_limit()
     translated_description = translate_and_update_description(description)
 
     character_endpoint = f"{KANKA_ENDPOINT}/characters"
@@ -166,7 +212,11 @@ def create_kanka_character(name, description, location_id):
     }
 
     response = requests.post(character_endpoint, json=data, headers=headers)
-    return response.json()
+    response_data = response.json()  # Convert response to JSON format
+    if response_data.get('data') and response_data['data'].get('entity_id'):
+        entity_id = response_data["data"]["entity_id"]
+        post_to_kanka_entity(entity_id, character_url)
+    return response_data
 
 def process_character(character_url, location_id):
     """
@@ -177,7 +227,7 @@ def process_character(character_url, location_id):
         character_name = character_translations[character_name]
     character_description, _, _ = fetch_and_parse_wiki(character_url, ["Background", "Description"])  # Assuming these sections are relevant
 
-    character_response = create_kanka_character(character_name, character_description, location_id)
+    character_response = create_kanka_character(character_name, character_description, location_id, character_url)
 
     if character_response.get('data'):
         print(f"Created character {character_name} with ID: {character_response['data']['id']}")
@@ -216,4 +266,3 @@ def process_location(location, parent_id=None):
 if __name__ == "__main__":
     for location in config['locations']:
         process_location(location)
-        #time.sleep(60)
