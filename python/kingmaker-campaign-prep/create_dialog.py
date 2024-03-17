@@ -93,8 +93,11 @@ def translate_by_id(text, id):
 def translate_glossary_entry(text):
     # Find the glossary entry in the glossary_entries list
     found_dict = next((item for item in glossary_entries if item["Key"] == text), None)
-    text_key = found_dict["Description"].split(':')[1]
-    return translate_text(text_key)
+    if not found_dict or "Description" not in found_dict:
+        return ""
+    else:
+        text_key = found_dict["Description"].split(':')[1]
+        return translate_text(text_key)
 
 # Function to fetch and parse HTML from a URL, then translate and replace specific texts
 def fetch_and_translate_html(url):
@@ -186,7 +189,7 @@ def extract_dialog_links(url):
         links = soup.find_all('a')
         
         # Extract href attributes
-        hrefs = [f"https://pathfinderkingmaker.fandom.com{link.get('href')}" for link in links if link.get('href') and link.get('href').startswith('/wiki/Dialogue')]
+        hrefs = [f"https://pathfinderkingmaker.fandom.com{link.get('href')}" for link in links if link.get('href') and (link.get('href').startswith('/wiki/Dialogue') or link.get('href').startswith('/wiki/Book_Event'))]
         return hrefs
     except requests.exceptions.RequestException as e:
         print(f"Request failed: {e}")
