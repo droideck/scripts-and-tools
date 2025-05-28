@@ -64,52 +64,59 @@ def remove_meta_content(text):
 
 
 def create_html_report(data_dict, log):
-    #json_data = json.dumps(report_data)
-    #data_dict = json.loads(json_data)
-
-    log.debug("Creating issues and milestones dataframes...")
+    log.debug("Creating issues dataframes...")
     issues_data = []
     for issue in data_dict['issues']:
-        description = remove_meta_content(issue['description'])
+        # Process description once and then replace newlines for HTML
+        description_text = remove_meta_content(issue['description'])
+        # Normalize all newline types to \n, then convert to <br>
+        description_html = description_text.replace('\r\n', '\n').replace('\r', '\n').replace('\n', '<br>')
+
         issues_data.append({
             'Title (URL)': f'<a href="{issue["url"]}">{issue["title"]}</a>',
-            'Description': remove_meta_content(description),
-            #'created_at': issue['created_at'],
-            #'updated_at': issue['updated_at'],
-            'Comments': remove_meta_content(description),
+            'Description': description_html,
+            # The 'Comments' column for the main issue row also shows the issue's description
+            'Comments': description_html,
         })
         for comment in issue['comments']:
             if "**Metadata Update from" in comment['body']:
                 continue
+            # Process comment body and then replace newlines for HTML
+            comment_body_text = remove_meta_content(comment['body'])
+            # Normalize all newline types to \n, then convert to <br>
+            comment_body_html = comment_body_text.replace('\r\n', '\n').replace('\r', '\n').replace('\n', '<br>')
             issues_data.append({
                 'Title (URL)': '',
                 'Description': '',
-            #    'created_at': comment['created_at'],
-            #    'updated_at': '',
-                'Comments': remove_meta_content(comment['body'])
+                'Comments': comment_body_html
             })
 
-    #milestones_data = []
-    #for milestone in data_dict['milestones']:
-    #    milestones_data.append({
-    #        'title': f'<a href="{milestone["url"]}">{milestone["title"]}</a>',
-    #    #    'created_at': milestone['created_at'],
-    #    #    'updated_at': milestone['updated_at']
-    #    })
-
     issues_df = pd.DataFrame(issues_data)
-    #milestones_df = pd.DataFrame(milestones_data)
 
     log.debug("Adding Tailwind CSS classes to HTML tables...")
     def add_table_classes(html_string):
-        html_string = html_string.replace("<table>", '<table class="table-auto w-full">')
-        html_string = html_string.replace("<th>", '<th class="px-4 py-2">')
-        html_string = html_string.replace("<td>", '<td class="border px-4 py-2">')
+        html_string = html_string.replace(
+            "<table>",
+            # Added table-fixed for predictable column widths
+            '<table class="min-w-full table-fixed divide-y divide-gray-200 border border-gray-300 shadow-md rounded-lg">'
+        )
+        html_string = html_string.replace(
+            "<thead>",
+            '<thead class="bg-gray-100">'
+        )
+        html_string = html_string.replace(
+            "<th>",
+            '<th class="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider border-b border-gray-300">'
+        )
+        html_string = html_string.replace(
+            "<td>",
+            # Removed max-w-xl, relying on CSS for column widths; kept break-words and align-top
+            '<td class="px-6 py-4 text-sm text-gray-700 border-b border-gray-300 break-words align-top">'
+        )
         return html_string
 
     log.debug("Generate HTML tables from dataframes...")
     issues_html = add_table_classes(issues_df.to_html(index=False, escape=False))
-    #milestones_html = add_table_classes(milestones_df.to_html(index=False))
 
     log.debug("Combining HTML tables into one HTML file...")
     html_report = f"""
@@ -119,10 +126,34 @@ def create_html_report(data_dict, log):
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <script src="https://cdn.tailwindcss.com"></script>
+        <title>GitHub Issues Report</title>
+        <style>
+            /* For alternating row colors */
+            tbody tr:nth-child(odd) {{
+                background-color: #ffffff; /* white */
+            }}
+            tbody tr:nth-child(even) {{
+                background-color: #f8f9fa; /* lighter gray */
+            }}
+            /* Ensure links within table cells are styled nicely */
+            td a {{
+                color: #007bff; /* Link color */
+                text-decoration: none;
+            }}
+            td a:hover {{
+                text-decoration: underline;
+            }}
+            /* Column widths - applied because 'table-fixed' is on the table */
+            thead th:nth-child(1), tbody td:nth-child(1) {{ width: 30%; }} /* Title (URL) - wider */
+            thead th:nth-child(2), tbody td:nth-child(2) {{ width: 35%; }} /* Description */
+            thead th:nth-child(3), tbody td:nth-child(3) {{ width: 35%; }} /* Comments */
+        </style>
     </head>
-    <body>
-        <h1 class="text-3xl font-bold mb-4 text-center">GitHub Issues</h1>
-        {issues_html}
+    <body class="bg-gray-50 p-8">
+        <div class="container mx-auto bg-white shadow-lg rounded-lg p-6">
+            <h1 class="text-4xl font-bold mb-6 text-center text-gray-800">GitHub Issues Report</h1>
+            {issues_html}
+        </div>
     </body>
     </html>
     """
@@ -154,24 +185,11 @@ class GithubWorker:
     def get_issues(self):
         self.log.debug("Creating issues and milestones JSON...")
         report_data['issues'] = []
-        #report_data['milestones'] = []
         try:
-            #for milestone in self.milestones:
-            #    milestone_data = {
-            #        'title': milestone.title,
-            #        'url': milestone.html_url,
-            #        'created_at': milestone.created_at.isoformat(),
-            #        'updated_at': milestone.updated_at.isoformat()
-            #    }
-            #    report_data['milestones'].append(milestone_data)
-            #    self.log.debug(f"Milestone fetched: {milestone_data['title']}")
-
             for issue in self.issues:
                 issue_data = {
                     'title': issue.title,
                     'description': issue.body,
-            #        'created_at': issue.created_at.isoformat(),
-            #        'updated_at': issue.updated_at.isoformat(),
                     'url': issue.html_url,
                     'comments': [{'body': comment.body, 'created_at': comment.created_at.isoformat()} for comment in issue.get_comments()]
                 }
@@ -208,11 +226,37 @@ if __name__ == "__main__":
 
     signal.signal(signal.SIGINT, signal_handler)
 
-    if args.github_repo and "/" in args.github_repo:
-        owner, repo = args.github_repo.split("/")
+    if args.github_repo:
+        # Handle both full GitHub URLs and user/repo format
+        repo_input = args.github_repo.strip()
+
+        if repo_input.startswith('https://github.com/') or repo_input.startswith('http://github.com/'):
+            # Extract owner/repo from full URL
+            # Remove the protocol and domain
+            path_part = repo_input.split('github.com/')[-1]
+            # Remove any trailing slashes or .git extension
+            path_part = path_part.rstrip('/').rstrip('.git')
+
+            if "/" in path_part:
+                owner, repo = path_part.split("/", 1)  # Split only on first '/'
+            else:
+                log.error("Invalid GitHub URL format. Expected: https://github.com/user/repo")
+                sys.exit(1)
+        elif "/" in repo_input:
+            # Handle user/repo format
+            parts = repo_input.split("/")
+            if len(parts) == 2:
+                owner, repo = parts
+            else:
+                log.error("Invalid GitHub repo format. Expected: user/repo or https://github.com/user/repo")
+                sys.exit(1)
+        else:
+            log.error("Invalid GitHub repo format. Expected: user/repo or https://github.com/user/repo")
+            sys.exit(1)
+
         log.debug("GitHub repo: %s/%s" % (owner, repo))
     else:
-        log.error("Missing or incorrect GitHub repo argument. It should be in the format user/repo")
+        log.error("Missing GitHub repo argument")
         sys.exit(1)
 
     if args.api_key:
